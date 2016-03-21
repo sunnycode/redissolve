@@ -166,7 +166,7 @@ public class RedisQueue {
     Map<String, byte[][]> entriesByAckKey = getAckMap(this.nodeId, this.queueName, entries);
 
     for (int i = 0; i < this.POOLS.size(); i++) {
-      ackCallbacks.add(getMultiAcknowledge(this.nodeId, this.queueName, entriesByAckKey));
+      ackCallbacks.add(getMultiAcknowledge(entriesByAckKey));
     }
 
     MultiOps.<Void>doParallel(this.POOLS, ackCallbacks.build(), null, MULTI_OPERATION_TIMEOUT_MS);
@@ -349,8 +349,7 @@ public class RedisQueue {
     };
   }
 
-  private static JedisCallback<Void> getMultiAcknowledge(final String theNode,
-      final String theQueue, final Map<String, byte[][]> entries) {
+  private static JedisCallback<Void> getMultiAcknowledge(final Map<String, byte[][]> entries) {
     return new JedisCallback<Void>() {
       @Override
       public Void withJedis(Jedis jedis) {
@@ -380,7 +379,7 @@ public class RedisQueue {
     for (Pair<DateTime, byte[]> entry : entries) {
       String ackKey = new String(getAckKey(theNodeId, theQueue, entry.first));
 
-      if (lastAckKey != null && !ackKey.equals(lastAckKey) && entries.size() > 0) {
+      if (lastAckKey != null && !ackKey.equals(lastAckKey) && lastEntries.size() > 0) {
         ackMap.put(ackKey, lastEntries.toArray(new byte[][] {}));
         lastAckKey = null;
         lastEntries = null;
@@ -394,8 +393,8 @@ public class RedisQueue {
       lastEntries.add(entry.second);
     }
 
-    if (lastAckKey != null && entries.size() > 0) {
-      ackMap.put(lastAckKey, lastEntries.toArray(new byte[lastEntries.size()][]));
+    if (lastAckKey != null && lastEntries.size() > 0) {
+      ackMap.put(lastAckKey, lastEntries.toArray(new byte[][] {}));
     }
 
     return ackMap;
