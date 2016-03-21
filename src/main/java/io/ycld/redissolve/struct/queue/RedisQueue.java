@@ -4,7 +4,6 @@ import io.ycld.redissolve.MultiOps;
 import io.ycld.redissolve.RedisConfig;
 import io.ycld.redissolve.RedisTemplates;
 import io.ycld.redissolve.RedisTemplates.JedisCallback;
-import io.ycld.redissolve.misc.Hex;
 import io.ycld.redissolve.misc.Pair;
 import io.ycld.redissolve.queue.ClusterConfig;
 
@@ -35,7 +34,7 @@ public class RedisQueue {
   private static final long OPERATION_TIMEOUT_MS = 100;
   private static final long MULTI_OPERATION_TIMEOUT_MS = 500;
 
-  private static final int PERSISTENCE_WINDOW_SECS = 8 * 60 * 60; // 8h as seconds
+  private static final int PERSISTENCE_WINDOW_SECS = 6 * 60 * 60; // 6h as seconds
   private static final DateTimeFormatter format = DateTimeFormat.forPattern("yyyyMMdd'T'HHmm")
       .withZone(DateTimeZone.UTC);
 
@@ -97,7 +96,7 @@ public class RedisQueue {
     });
   }
 
-  public void enqueue(DateTime timestamp, byte[] uuid, byte[] entry) {
+  public void enqueue(DateTime timestamp, String uuid, String entry) {
     ImmutableList.Builder<JedisCallback<Boolean>> enqueueCallbacks = ImmutableList.builder();
 
     for (String otherNodeId : this.NODES.keySet()) {
@@ -126,7 +125,7 @@ public class RedisQueue {
     }
   }
 
-  public void drainTo(List<byte[]> toList, int count) {
+  public void drainTo(List<String> toList, int count) {
     int initialSize = toList.size();
     int maxSize = initialSize + count;
 
@@ -147,7 +146,7 @@ public class RedisQueue {
     }
   }
 
-  public void acknowledge(DateTime timestamp, byte[] uuid) {
+  public void acknowledge(DateTime timestamp, String uuid) {
     ImmutableList.Builder<JedisCallback<Void>> ackCallbacks =
         ImmutableList.<JedisCallback<Void>>builder();
 
@@ -159,11 +158,11 @@ public class RedisQueue {
     MultiOps.<Void>doParallel(this.POOLS, ackCallbacks.build(), null, OPERATION_TIMEOUT_MS);
   }
 
-  public void acknowledgeMulti(List<Pair<DateTime, byte[]>> entries) {
+  public void acknowledgeMulti(List<Pair<DateTime, String>> entries) {
     ImmutableList.Builder<JedisCallback<Void>> ackCallbacks =
         ImmutableList.<JedisCallback<Void>>builder();
 
-    Map<String, byte[][]> entriesByAckKey = getAckMap(this.nodeId, this.queueName, entries);
+    Map<String, String[]> entriesByAckKey = getAckMap(this.nodeId, this.queueName, entries);
 
     for (int i = 0; i < this.POOLS.size(); i++) {
       ackCallbacks.add(getMultiAcknowledge(entriesByAckKey));
@@ -219,11 +218,11 @@ public class RedisQueue {
   private static int doAntiEntropy(final String sourceNode, final String targetNode,
       final JedisPool thePool, final String queueName, final DateTime timestamp) {
 
-    Set<byte[]> found = RedisTemplates.withJedisCallback(thePool, new JedisCallback<Set<byte[]>>() {
+    Set<String> found = RedisTemplates.withJedisCallback(thePool, new JedisCallback<Set<String>>() {
       @Override
-      public Set<byte[]> withJedis(Jedis jedis) {
-        byte[] sourceAckKey = getAckKey(sourceNode, queueName, timestamp);
-        byte[] targetAckKey = getAckKey(targetNode, queueName, timestamp);
+      public Set<String> withJedis(Jedis jedis) {
+        String sourceAckKey = getAckKey(sourceNode, queueName, timestamp);
+        String targetAckKey = getAckKey(targetNode, queueName, timestamp);
 
         return jedis.sdiff(sourceAckKey, targetAckKey);
       }
@@ -231,7 +230,7 @@ public class RedisQueue {
 
     if (found.size() > 0) {
       System.out.println("anti-entropy found " + found.size() + " entries in " + queueName + " at "
-          + sourceNode + " for " + targetNode);
+          + sourceNode + " for " + targetNode + " -> " + found);
 
       doBatchEnqueue(targetNode, thePool, queueName, timestamp, found);
     }
@@ -240,12 +239,12 @@ public class RedisQueue {
   }
 
   private static JedisCallback<Boolean> doSingleEnqueue(final String nodeId,
-      final String queueName, final byte[] uuid, final byte[] entry, final boolean isFallback) {
+      final String queueName, final String uuid, final String entry, final boolean isFallback) {
     return new JedisCallback<Boolean>() {
       @Override
       public Boolean withJedis(Jedis jedis) {
-        byte[] uuidKey = getUuidKey(queueName, uuid);
-        byte[] queueKey = getQueueKey(nodeId, queueName);
+        String uuidKey = getUuidKey(queueName, uuid);
+        String queueKey = getQueueKey(nodeId, queueName);
 
         Transaction txn1 = jedis.multi();
 
@@ -265,15 +264,15 @@ public class RedisQueue {
   }
 
   private static void doBatchEnqueue(final String nodeId, final JedisPool thePool,
-      final String queueName, final DateTime timestamp, final Set<byte[]> uuids) {
+      final String queueName, final DateTime timestamp, final Set<String> uuids) {
     RedisTemplates.withJedisCallback(thePool, new JedisCallback<Void>() {
       @Override
       public Void withJedis(Jedis jedis) {
-        byte[] queueKey = getQueueKey(nodeId, queueName);
+        String queueKey = getQueueKey(nodeId, queueName);
 
         Transaction txn1 = jedis.multi();
 
-        txn1.rpush(queueKey, uuids.toArray(new byte[][] {}));
+        txn1.rpush(queueKey, uuids.toArray(new String[] {}));
         txn1.expire(queueKey, PERSISTENCE_WINDOW_SECS);
 
         txn1.exec();
@@ -283,7 +282,7 @@ public class RedisQueue {
     });
   }
 
-  private static JedisCallback<Long> getSingleSize(final byte[] queueKey) {
+  private static JedisCallback<Long> getSingleSize(final String queueKey) {
     return new JedisCallback<Long>() {
       @Override
       public Long withJedis(Jedis jedis) {
@@ -295,18 +294,18 @@ public class RedisQueue {
   }
 
   public void doDrainTo(final String theNode, final JedisPool pool, final String nodeId,
-      final String queueName, final List<byte[]> toList, final int count) {
-    final byte[] queueKey = getQueueKey(nodeId, queueName);
+      final String queueName, final List<String> toList, final int count) {
+    final String queueKey = getQueueKey(nodeId, queueName);
 
     RedisTemplates.withJedisCallback(pool, new JedisCallback<Void>() {
       @Override
       public Void withJedis(Jedis jedis) {
         Transaction txn1 = jedis.multi();
-        Response<List<byte[]>> entries = txn1.lrange(queueKey, 0, count - 1);
+        Response<List<String>> entries = txn1.lrange(queueKey, 0, count - 1);
         txn1.ltrim(queueKey, count, -1);
         txn1.exec();
 
-        List<byte[]> todo = entries.get();
+        List<String> todo = entries.get();
 
         if (todo.size() < 1) {
           // System.out.println("got 0 entries in " + queueName + " for " + nodeId + " at " +
@@ -314,15 +313,15 @@ public class RedisQueue {
           return null;
         }
 
-        byte[][] todoKeys = new byte[todo.size()][];
+        String[] todoKeys = new String[todo.size()];
 
         for (int i = 0; i < todo.size(); i++) {
-          byte[] uuidBytes = todo.get(i);
-          byte[] uuidKey = getUuidKey(queueName, uuidBytes);
+          String uuidBytes = todo.get(i);
+          String uuidKey = getUuidKey(queueName, uuidBytes);
           todoKeys[i] = uuidKey;
         }
 
-        List<byte[]> foundEntries = jedis.mget(todoKeys);
+        List<String> foundEntries = jedis.mget(todoKeys);
         toList.addAll(foundEntries);
 
         // System.out.println("got " + foundEntries.size() + " entries in " + queueName + " for "
@@ -333,7 +332,7 @@ public class RedisQueue {
     });
   }
 
-  private static JedisCallback<Void> getSingleAcknowledge(final byte[] ackKey, final byte[] uuid) {
+  private static JedisCallback<Void> getSingleAcknowledge(final String ackKey, final String uuid) {
     return new JedisCallback<Void>() {
       @Override
       public Void withJedis(Jedis jedis) {
@@ -349,14 +348,14 @@ public class RedisQueue {
     };
   }
 
-  private static JedisCallback<Void> getMultiAcknowledge(final Map<String, byte[][]> entries) {
+  private static JedisCallback<Void> getMultiAcknowledge(final Map<String, String[]> entries) {
     return new JedisCallback<Void>() {
       @Override
       public Void withJedis(Jedis jedis) {
         Transaction txn1 = jedis.multi();
 
-        for (Map.Entry<String, byte[][]> entry : entries.entrySet()) {
-          byte[] ackKey = entry.getKey().getBytes();
+        for (Map.Entry<String, String[]> entry : entries.entrySet()) {
+          String ackKey = entry.getKey();
 
           txn1.sadd(ackKey, entry.getValue());
           txn1.expire(ackKey, PERSISTENCE_WINDOW_SECS);
@@ -369,47 +368,47 @@ public class RedisQueue {
     };
   }
 
-  private static Map<String, byte[][]> getAckMap(String theNodeId, String theQueue,
-      List<Pair<DateTime, byte[]>> entries) {
-    final Map<String, byte[][]> ackMap = new LinkedHashMap<String, byte[][]>();
+  private static Map<String, String[]> getAckMap(String theNodeId, String theQueue,
+      List<Pair<DateTime, String>> entries) {
+    final Map<String, String[]> ackMap = new LinkedHashMap<String, String[]>();
 
     String lastAckKey = null;
-    List<byte[]> lastEntries = null;
+    List<String> lastEntries = null;
 
-    for (Pair<DateTime, byte[]> entry : entries) {
-      String ackKey = new String(getAckKey(theNodeId, theQueue, entry.first));
+    for (Pair<DateTime, String> entry : entries) {
+      String ackKey = getAckKey(theNodeId, theQueue, entry.first);
 
       if (lastAckKey != null && !ackKey.equals(lastAckKey) && lastEntries.size() > 0) {
-        ackMap.put(ackKey, lastEntries.toArray(new byte[][] {}));
+        ackMap.put(ackKey, lastEntries.toArray(new String[] {}));
         lastAckKey = null;
         lastEntries = null;
       }
 
       if (lastAckKey == null) {
         lastAckKey = ackKey;
-        lastEntries = new ArrayList<byte[]>();
+        lastEntries = new ArrayList<String>();
       }
 
       lastEntries.add(entry.second);
     }
 
     if (lastAckKey != null && lastEntries.size() > 0) {
-      ackMap.put(lastAckKey, lastEntries.toArray(new byte[][] {}));
+      ackMap.put(lastAckKey, lastEntries.toArray(new String[] {}));
     }
 
     return ackMap;
   }
 
-  private static byte[] getUuidKey(final String queueName, final byte[] uuid) {
-    return ("e:" + queueName + ":" + new String(Hex.encodeHex(uuid))).getBytes();
+  private static String getUuidKey(final String queueName, final String uuid) {
+    return ("e:" + queueName + ":" + uuid);
   }
 
-  private static byte[] getQueueKey(final String nodeId, final String queueName) {
-    return ("q:" + queueName + ":" + nodeId).getBytes();
+  private static String getQueueKey(final String nodeId, final String queueName) {
+    return ("q:" + queueName + ":" + nodeId);
   }
 
-  private static byte[] getAckKey(final String nodeId, final String queueName,
+  private static String getAckKey(final String nodeId, final String queueName,
       final DateTime timestamp) {
-    return ("a:" + queueName + ":" + nodeId + ":" + format.print(timestamp)).getBytes();
+    return ("a:" + queueName + ":" + nodeId + ":" + format.print(timestamp));
   }
 }
