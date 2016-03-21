@@ -31,10 +31,10 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
 public class RedisQueue {
-  private static final long OPERATION_TIMEOUT_MS = 100;
+  private static final long OPERATION_TIMEOUT_MS = 250;
   private static final long MULTI_OPERATION_TIMEOUT_MS = 500;
 
-  private static final int PERSISTENCE_WINDOW_SECS = 6 * 60 * 60; // 6h as seconds
+  private static final int PERSISTENCE_WINDOW_SECS = 4 * 60 * 60; // 4h as seconds
   private static final DateTimeFormatter format = DateTimeFormat.forPattern("yyyyMMdd'T'HHmm")
       .withZone(DateTimeZone.UTC);
 
@@ -104,7 +104,8 @@ public class RedisQueue {
     }
 
     // perform enqueue in parallel
-    List<Boolean> results = MultiOps.doParallel(this.POOLS, enqueueCallbacks.build(), false, 100);
+    List<Boolean> results =
+        MultiOps.doParallel(this.POOLS, enqueueCallbacks.build(), false, OPERATION_TIMEOUT_MS);
 
     // enqueue any errors locally using non-parallel path
     JedisPool thisPool = this.NODES.get(this.nodeId);
@@ -116,6 +117,9 @@ public class RedisQueue {
       if (!remoteResult) {
         // fallback = true if was remote
         boolean wasRemote = otherNodeId.equals(this.nodeId);
+
+        System.out.println(new DateTime() + " ENQUEUE_RETRY " + uuid + " @ " + otherNodeId + " ("
+            + (wasRemote ? "remote" : "local") + ")");
 
         RedisTemplates.withJedisCallback(thisPool,
             doSingleEnqueue(otherNodeId, queueName, uuid, entry, wasRemote));
