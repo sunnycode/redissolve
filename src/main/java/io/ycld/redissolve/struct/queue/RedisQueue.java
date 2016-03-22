@@ -166,7 +166,7 @@ public class RedisQueue {
     ImmutableList.Builder<JedisCallback<Void>> ackCallbacks =
         ImmutableList.<JedisCallback<Void>>builder();
 
-    Map<String, String[]> entriesByAckKey = getAckMap(this.nodeId, this.queueName, entries);
+    Map<String, List<String>> entriesByAckKey = getAckMap(this.nodeId, this.queueName, entries);
 
     for (int i = 0; i < this.POOLS.size(); i++) {
       ackCallbacks.add(getMultiAcknowledge(entriesByAckKey));
@@ -352,16 +352,19 @@ public class RedisQueue {
     };
   }
 
-  private static JedisCallback<Void> getMultiAcknowledge(final Map<String, String[]> entries) {
+  private static JedisCallback<Void> getMultiAcknowledge(final Map<String, List<String>> entries) {
     return new JedisCallback<Void>() {
       @Override
       public Void withJedis(Jedis jedis) {
         Transaction txn1 = jedis.multi();
 
-        for (Map.Entry<String, String[]> entry : entries.entrySet()) {
+        for (Map.Entry<String, List<String>> entry : entries.entrySet()) {
           String ackKey = entry.getKey();
 
-          txn1.sadd(ackKey, entry.getValue());
+          for (String uuid : entry.getValue()) {
+            txn1.sadd(ackKey, uuid);
+          }
+
           txn1.expire(ackKey, PERSISTENCE_WINDOW_SECS);
         }
 
@@ -372,32 +375,18 @@ public class RedisQueue {
     };
   }
 
-  private static Map<String, String[]> getAckMap(String theNodeId, String theQueue,
+  private static Map<String, List<String>> getAckMap(String theNodeId, String theQueue,
       List<Pair<DateTime, String>> entries) {
-    final Map<String, String[]> ackMap = new LinkedHashMap<String, String[]>();
-
-    String lastAckKey = null;
-    List<String> lastEntries = null;
+    final Map<String, List<String>> ackMap = new LinkedHashMap<String, List<String>>();
 
     for (Pair<DateTime, String> entry : entries) {
       String ackKey = getAckKey(theNodeId, theQueue, entry.first);
 
-      if (lastAckKey != null && !ackKey.equals(lastAckKey) && lastEntries.size() > 0) {
-        ackMap.put(ackKey, lastEntries.toArray(new String[] {}));
-        lastAckKey = null;
-        lastEntries = null;
+      if (!ackMap.containsKey(ackKey)) {
+        ackMap.put(ackKey, new ArrayList<String>());
       }
 
-      if (lastAckKey == null) {
-        lastAckKey = ackKey;
-        lastEntries = new ArrayList<String>();
-      }
-
-      lastEntries.add(entry.second);
-    }
-
-    if (lastAckKey != null && lastEntries.size() > 0) {
-      ackMap.put(lastAckKey, lastEntries.toArray(new String[] {}));
+      ackMap.get(ackKey).add(entry.second);
     }
 
     return ackMap;
