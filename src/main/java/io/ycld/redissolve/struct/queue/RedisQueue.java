@@ -31,8 +31,10 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 
 public class RedisQueue {
-  private static final long OPERATION_TIMEOUT_MS = 250;
-  private static final long MULTI_OPERATION_TIMEOUT_MS = 500;
+  private static final long OPERATION_TIMEOUT_MS = Long.parseLong(System.getProperty("op.timeout",
+      "1000"));
+  private static final long MULTI_OPERATION_TIMEOUT_MS = Long.parseLong(System.getProperty(
+      "multiop.timeout", "4000"));
 
   private static final int PERSISTENCE_WINDOW_SECS = 4 * 60 * 60; // 4h as seconds
   private static final DateTimeFormatter format = DateTimeFormat.forPattern("yyyyMMdd'T'HHmm")
