@@ -25,7 +25,7 @@ public class QueueUtil {
   public static final long MULTI_OPERATION_TIMEOUT_MS = Long.parseLong(System.getProperty(
       "multiop.timeout", "4000"));
 
-  public static final int PERSISTENCE_WINDOW_SECS = 4 * 60 * 60; // 4h as seconds
+  public static final int PERSISTENCE_WINDOW_SECS = 90 * 60; // 90 min as seconds
   public static final DateTimeFormatter format = DateTimeFormat.forPattern("yyyyMMdd'T'HHmm")
       .withZone(DateTimeZone.UTC);
 
