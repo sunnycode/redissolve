@@ -2,7 +2,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.ycld.redissolve</groupId>
   <artifactId>redissolve</artifactId>
-  <version>0.5.1-SNAPSHOT</version>
+  <version>0.5.1</version>
 
   <scm>
     <connection>scm:git:git@github.com:sunnycode/redissolve.git</connection>
